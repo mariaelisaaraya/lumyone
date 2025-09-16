@@ -92,7 +92,6 @@ Integrar reflector nos podría proporcionar datos confiables en tiempo real desd
 
 ---
 
-## ✅ Recomendación  
 La combinación de **Reflector + Soroswap + Account Abstraction** permitirá:  
 - Mejor experiencia **DeFi B2B** en Telegram.  
 - Mayor confianza y transparencia para los personas usuarias.  
