@@ -18,7 +18,11 @@ class SimpleStellarBot {
             }
         });
 
-        this.server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
+        this.server = new StellarSdk.Horizon.Server(process.env.HORIZON_URL || process.env.STELLAR_HORIZON_TESTNET);
+        this.tokenAddresses = {
+            'XLM': process.env.TOKEN_XLM_TESTNET,
+            'USDC': process.env.TOKEN_USDC_TESTNET
+        };
         this.users = {};
         this.setupHandlers();
     }
@@ -162,7 +166,7 @@ class SimpleStellarBot {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-                await fetch(`https://friendbot.stellar.org?addr=${keypair.publicKey()}`, {
+                await fetch(`${process.env.STELLAR_FRIENDBOT_URL}?addr=${keypair.publicKey()}`, {
                     signal: controller.signal
                 });
                 clearTimeout(timeoutId);
@@ -502,13 +506,8 @@ class SimpleStellarBot {
         await ctx.reply('⏳ Getting best price...');
 
         try {
-            const tokenAddresses = {
-                'XLM': 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
-                'USDC': 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
-            };
-
-            const assetIn = tokenAddresses[swap.fromToken];
-            const assetOut = tokenAddresses[swap.toToken];
+            const assetIn = this.tokenAddresses[swap.fromToken];
+            const assetOut = this.tokenAddresses[swap.toToken];
 
             console.log('Debug - Swap request:', {
                 fromToken: swap.fromToken,
@@ -524,16 +523,16 @@ class SimpleStellarBot {
                 amount: (parseFloat(amount) * 10000000).toString(),
                 tradeType: 'EXACT_IN',
                 protocols: ['soroswap'],
-                slippageBps: 50
+                slippageBps: parseInt(process.env.DEFAULT_SLIPPAGE_BPS) || 50
             };
 
             console.log('Debug - Request body:', requestBody);
 
-            const quoteResponse = await fetch('https://api.soroswap.finance/quote?network=testnet', {
+            const quoteResponse = await fetch(`${process.env.SOROSWAP_API_URL}/quote?network=${process.env.STELLAR_NETWORK}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer sk_417fd0cbec2d50d5892266ddfe8bcdb1af14ed4e3f9ce713e1f58b75aa36d9ab`
+                    'Authorization': `Bearer ${process.env.SOROSWAP_API_KEY}`
                 },
                 body: JSON.stringify(requestBody)
             });
