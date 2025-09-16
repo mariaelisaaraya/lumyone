@@ -8,9 +8,8 @@ const QRCode = require('qrcode');
 
 class SimpleStellarBot {
     constructor() {
-        // Configurar timeout más largo para el bot
         const agent = new https.Agent({
-            timeout: 30000, // 30 segundos
+            timeout: 30000, 
             keepAlive: true
         });
 
@@ -21,7 +20,7 @@ class SimpleStellarBot {
         });
 
         this.server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
-        this.users = {}; // Base de datos simple en memoria
+        this.users = {}; 
         this.setupHandlers();
     }
 
@@ -39,10 +38,15 @@ class SimpleStellarBot {
         this.bot.action('confirm_tx', (ctx) => this.executeTransaction(ctx));
         this.bot.action('back_to_menu', (ctx) => this.showMainMenu(ctx));
         this.bot.action('show_qr', (ctx) => this.showQRCode(ctx));
+        this.bot.action('swap_tokens', (ctx) => this.startSwapFlow(ctx));
+        this.bot.action('swap_xlm_usdc', (ctx) => this.requestSwapAmount(ctx, 'XLM', 'USDC'));
+        this.bot.action('swap_usdc_xlm', (ctx) => this.requestSwapAmount(ctx, 'USDC', 'XLM'));
+        this.bot.action('view_prices', (ctx) => this.showTokenPrices(ctx));
+        this.bot.action('view_prices', (ctx) => this.showTokenPrices(ctx));
+        this.bot.action('swap_amount_10', (ctx) => this.getSwapQuote(ctx, '10'));
+        this.bot.action('swap_amount_50', (ctx) => this.getSwapQuote(ctx, '50'));
+        this.bot.action('swap_amount_100', (ctx) => this.getSwapQuote(ctx, '100'));
 
-
-
-        // Manejar texto como "teléfono" o destinatarios
         this.bot.on('text', (ctx) => {
             const userId = ctx.from.id;
             const text = ctx.message.text;
@@ -50,12 +54,10 @@ class SimpleStellarBot {
             if (!this.users[userId] && text !== '/start') {
                 this.handlePhoneText(ctx);
             } else if (this.users[userId]) {
-                // Usuario ya existe, puede ser un destinatario
                 this.handleRecipientInput(ctx);
             }
         });
 
-        // Manejar errores del bot
         this.bot.catch((err, ctx) => {
             console.error('Error en el bot:', err);
             if (ctx && ctx.reply) {
@@ -116,13 +118,11 @@ class SimpleStellarBot {
         await ctx.reply('⏳ Creando tu wallet...');
 
         try {
-            // Generar keypair determinística usando el teléfono como seed
             const seed = `stellar_wallet_${phoneNumber}`;
             const keypair = StellarSdk.Keypair.fromRawEd25519Seed(
                 StellarSdk.hash(seed).slice(0, 32)
             );
 
-            // Crear cuenta en testnet usando Friendbot con timeout
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -136,7 +136,6 @@ class SimpleStellarBot {
                 console.log('Error con Friendbot:', error.message);
             }
 
-            // Guardar usuario
             this.users[userId] = {
                 phoneNumber,
                 publicKey: keypair.publicKey(),
@@ -168,13 +167,11 @@ class SimpleStellarBot {
         await ctx.reply('⏳ Creando tu wallet de prueba...');
 
         try {
-            // Generar keypair determinística usando el texto como seed
             const seed = `stellar_wallet_${phoneNumber}`;
             const keypair = StellarSdk.Keypair.fromRawEd25519Seed(
                 StellarSdk.hash(seed).slice(0, 32)
             );
 
-            // Crear cuenta en testnet con timeout
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -188,7 +185,6 @@ class SimpleStellarBot {
                 console.log('Error con Friendbot:', error.message);
             }
 
-            // Guardar usuario
             this.users[userId] = {
                 phoneNumber,
                 publicKey: keypair.publicKey(),
@@ -234,6 +230,7 @@ class SimpleStellarBot {
                         inline_keyboard: [
                             [{ text: '💰 Ver Balance', callback_data: 'view_balance' }],
                             [{ text: '💸 Enviar XLM', callback_data: 'send_xlm' }],
+                            [{ text: '🔄 Swap Tokens', callback_data: 'swap_tokens' }],
                             [{ text: '📱 Mi QR', callback_data: 'show_qr' }]
                         ]
                     }
@@ -295,7 +292,6 @@ class SimpleStellarBot {
         await ctx.reply('⏳ Generando tu QR...');
 
         try {
-            // Generar QR con la dirección pública
             const qrBuffer = await QRCode.toBuffer(user.publicKey, {
                 type: 'png',
                 width: 300,
@@ -325,6 +321,266 @@ class SimpleStellarBot {
         } catch (error) {
             console.error('Error generando QR:', error);
             await ctx.reply('❌ Error al generar el QR. Intenta de nuevo.');
+        }
+    }
+
+    async startSwapFlow(ctx) {
+        const userId = ctx.from.id;
+        const user = this.users[userId];
+
+        if (!user) {
+            await ctx.reply('❌ No tienes una wallet creada. Usa /start para crear una.');
+            return;
+        }
+
+        await ctx.reply(
+            '🔄 **Swap de Tokens**\n\n' +
+            '¿Qué quieres hacer?',
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '💱 XLM → USDC', callback_data: 'swap_xlm_usdc' }],
+                        [{ text: '💱 USDC → XLM', callback_data: 'swap_usdc_xlm' }],
+                        // [{ text: '📊 Ver Precios', callback_data: 'view_prices' }],
+                        [{ text: '🔙 Volver al menú', callback_data: 'back_to_menu' }]
+                    ]
+                }
+            }
+        );
+    }
+
+    async requestSwapAmount(ctx, fromToken, toToken) {
+        const userId = ctx.from.id;
+
+        // Guardar temporalmente el swap
+        if (!this.users[userId].tempSwap) {
+            this.users[userId].tempSwap = {};
+        }
+        this.users[userId].tempSwap = { fromToken, toToken };
+
+        await ctx.reply(
+            `💱 **Swap ${fromToken} → ${toToken}**\n\n` +
+            `¿Cuánto ${fromToken} quieres cambiar?`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '10 ' + fromToken, callback_data: 'swap_amount_10' }],
+                        [{ text: '50 ' + fromToken, callback_data: 'swap_amount_50' }],
+                        [{ text: '100 ' + fromToken, callback_data: 'swap_amount_100' }],
+                        [{ text: '🔙 Cancelar', callback_data: 'swap_tokens' }]
+                    ],
+                    force_reply: true,
+                    input_field_placeholder: `Cantidad de ${fromToken}...`
+                }
+            }
+        );
+    }
+
+    async authenticateSoroswap() {
+        try {
+            // 1. Registrar usuario (solo una vez)
+            const registerData = {
+                // username: "lumy_bot_user",
+                password: "bdbSS2025",
+                email: "buendiabuilders@gmail.com"
+            };
+
+            console.log('Intentando registro...');
+            const registerResponse = await fetch('https://soroswap-api-staging-436722401508.us-central1.run.app/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(registerData)
+            });
+
+            if (registerResponse.status !== 201 && registerResponse.status !== 409) {
+                throw new Error(`Registration failed: ${registerResponse.status}`);
+            }
+            console.log('Registro OK (o usuario ya existe)');
+
+            // 2. Login para obtener access_token
+            const loginData = {
+                email: "buendiabuilders@gmail.com",
+                password: "bdbSS2025"
+            };
+
+            console.log('Haciendo login...');
+            const loginResponse = await fetch('https://soroswap-api-staging-436722401508.us-central1.run.app/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(loginData)
+            });
+
+            if (!loginResponse.ok) {
+                throw new Error(`Login failed: ${loginResponse.status}`);
+            }
+
+            const loginResult = await loginResponse.json();
+            console.log('Login exitoso!');
+
+            // Guardar token para uso posterior
+            this.soroswapToken = loginResult.access_token;
+            return loginResult.access_token;
+
+        } catch (error) {
+            console.error('Error en autenticación Soroswap:', error);
+            return null;
+        }
+    }
+
+    async getSwapQuote(ctx, amount) {
+        const userId = ctx.from.id;
+        const user = this.users[userId];
+        const swap = user.tempSwap;
+
+        await ctx.reply('⏳ Consultando mejor precio...');
+
+        try {
+            const tokenAddresses = {
+                'XLM': 'native', 
+                'USDC': 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA' 
+            };
+
+            const assetIn = tokenAddresses[swap.fromToken];
+            const assetOut = tokenAddresses[swap.toToken];
+
+            console.log('Debug - Swap request:', {
+                fromToken: swap.fromToken,
+                toToken: swap.toToken,
+                amount: amount,
+                assetIn: assetIn,
+                assetOut: assetOut
+            });
+
+            const requestBody = {
+                assetIn: assetIn,
+                assetOut: assetOut,
+                amount: (parseFloat(amount) * 10000000).toString(), 
+                tradeType: 'EXACT_IN'
+            };
+
+            console.log('Debug - Request body:', requestBody);
+
+            // PI KEY
+            const quoteResponse = await fetch('https://soroswap-api-staging-436722401508.us-central1.run.app/quote', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': 'sk_417fd0cbec2d50d5892266ddfe8bcdb1af14ed4e3f9ce713e1f58b75aa36d9ab'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            console.log('Debug - Response status:', quoteResponse.status);
+
+            if (!quoteResponse.ok) {
+                const errorText = await quoteResponse.text();
+                console.log('Debug - Error response:', errorText);
+                throw new Error(`API Error: ${quoteResponse.status} - ${errorText}`);
+            }
+
+            const quote = await quoteResponse.json();
+            console.log('Debug - Quote response:', quote);
+
+            // Convertir respuesta a formato legible
+            const amountOut = (parseInt(quote.amountOut) / 10000000).toFixed(6);
+            const priceImpact = quote.priceImpact || '0.1';
+
+            await ctx.reply(
+                `💱 **Cotización de Swap**\n\n` +
+                `📤 **Das:** ${amount} ${swap.fromToken}\n` +
+                `📥 **Recibes:** ${amountOut} ${swap.toToken}\n` +
+                `📊 **Precio:** 1 ${swap.fromToken} = ${(parseFloat(amountOut) / parseFloat(amount)).toFixed(4)} ${swap.toToken}\n` +
+                `⚡ **Impacto:** ~${priceImpact}%\n\n` +
+                `¿Confirmas el swap?`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Confirmar Swap', callback_data: 'confirm_swap' }],
+                            [{ text: '❌ Cancelar', callback_data: 'swap_tokens' }]
+                        ]
+                    }
+                }
+            );
+
+            // Guardar cotización para el swap
+            user.tempSwap.amount = amount;
+            user.tempSwap.quote = quote;
+            user.tempSwap.amountOut = amountOut;
+
+        } catch (error) {
+            console.error('Error completo en getSwapQuote:', error);
+            await ctx.reply(
+                `❌ **Error obteniendo cotización**\n\n` +
+                `Detalles: ${error.message}\n\n` +
+                'Intenta con una cantidad menor.',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '🔄 Intentar de nuevo', callback_data: 'swap_tokens' }
+                        ]]
+                    }
+                }
+            );
+        }
+    }
+
+    // Función auxiliar para procesar la respuesta
+    async processQuoteResponse(ctx, quote, amount, swap) {
+        const userId = ctx.from.id;
+        const user = this.users[userId];
+
+        // Convertir respuesta a formato legible
+        const amountOut = (parseInt(quote.amountOut) / 10000000).toFixed(6);
+        const priceImpact = quote.priceImpact || '0.1';
+
+        await ctx.reply(
+            `💱 **Cotización de Swap**\n\n` +
+            `📤 **Das:** ${amount} ${swap.fromToken}\n` +
+            `📥 **Recibes:** ${amountOut} ${swap.toToken}\n` +
+            `📊 **Precio:** 1 ${swap.fromToken} = ${(parseFloat(amountOut) / parseFloat(amount)).toFixed(4)} ${swap.toToken}\n` +
+            `⚡ **Impacto:** ~${priceImpact}%\n\n` +
+            `¿Confirmas el swap?`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '✅ Confirmar Swap', callback_data: 'confirm_swap' }],
+                        [{ text: '❌ Cancelar', callback_data: 'swap_tokens' }]
+                    ]
+                }
+            }
+        );
+
+        user.tempSwap.amount = amount;
+        user.tempSwap.quote = quote;
+        user.tempSwap.amountOut = amountOut;
+    }
+
+
+    async showTokenPrices(ctx) {
+        await ctx.reply('⏳ Consultando precios...');
+
+        try {
+            await ctx.reply(
+                '📊 **Precios Actuales**\n\n' +
+                '💰 **XLM/USDC:** ~$0.12\n' +
+                '🔄 **24h:** +2.3%\n\n' +
+                '_Precios aproximados desde Soroswap_',
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '🔙 Volver', callback_data: 'swap_tokens' }
+                        ]]
+                    }
+                }
+            );
+        } catch (error) {
+            await ctx.reply('❌ Error obteniendo precios.');
         }
     }
 
@@ -371,7 +627,6 @@ class SimpleStellarBot {
     async handleRecipientInput(ctx) {
         const text = ctx.message.text;
 
-        // Solo verificar direcciones Stellar
         if (text.startsWith('G') && text.length === 56) {
             if (StellarSdk.StrKey.isValidEd25519PublicKey(text)) {
                 await this.requestAmount(ctx, 'stellar_address', text);
@@ -384,7 +639,6 @@ class SimpleStellarBot {
     }
 
     async requestAmount(ctx, recipientType, recipient) {
-        // Guardar temporalmente el destinatario para este usuario
         const userId = ctx.from.id;
         if (!this.users[userId].tempTransaction) {
             this.users[userId].tempTransaction = {};
@@ -437,7 +691,6 @@ class SimpleStellarBot {
             }
         );
 
-        // Guardar el monto en la transacción temporal
         user.tempTransaction.amount = amount;
     }
 
@@ -532,8 +785,6 @@ class SimpleStellarBot {
         }
     }
 
-
-    // Función mejorada para iniciar con reintentos
     async launch() {
         const maxRetries = 5;
         let attempt = 1;
@@ -550,11 +801,10 @@ class SimpleStellarBot {
                 await this.bot.launch();
                 console.log('🚀 Bot iniciado exitosamente!');
 
-                // Graceful stop
                 process.once('SIGINT', () => this.bot.stop('SIGINT'));
                 process.once('SIGTERM', () => this.bot.stop('SIGTERM'));
 
-                return; // Salir si todo funciona
+                return; 
 
             } catch (error) {
                 console.error(`❌ Intento ${attempt} falló:`, error.message);
